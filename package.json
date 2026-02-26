@@ -1,26 +1,40 @@
 {
-  "name": "tmp_app",
+  "name": "hayati-chatbot",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "next lint"
   },
   "dependencies": {
-    "next": "16.1.6",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "@ai-sdk/anthropic": "^3.0.47",
+    "@ai-sdk/openai": "^3.0.33",
+    "@ai-sdk/react": "^3.0.100",
+    "@ai-sdk/xai": "^3.0.58",
+    "@tailwindcss/postcss": "^4.2.0",
+    "ai": "^6.0.98",
+    "autoprefixer": "^10.4.24",
+    "clsx": "^2.1.1",
+    "firebase": "^12.9.0",
+    "firebase-admin": "^13.6.1",
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.300.0",
+    "next": "15.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "tailwind-merge": "^2.5.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4",
+    "eslint": "^8",
+    "eslint-config-next": "15.1.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }
 }

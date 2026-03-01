@@ -22,9 +22,10 @@ interface Message {
 
 interface ChatWindowProps {
     girlfriend: Girlfriend;
+    sessionId: string;
 }
 
-export function ChatWindow({ girlfriend }: ChatWindowProps) {
+export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
     const [modelId] = useState(LLM_MODELS.GROK);
     const [mounted, setMounted] = useState(false);
     const [loadingHistory, setLoadingHistory] = useState(true);
@@ -35,8 +36,6 @@ export function ChatWindow({ girlfriend }: ChatWindowProps) {
     const abortRef = useRef<AbortController | null>(null);
     const isStreamingRef = useRef(false); // prevent Firestore from overwriting during stream
 
-    const GLOBAL_CHAT_ID = `global-${girlfriend.id}`;
-
     // 1. Mount
     useEffect(() => {
         setMounted(true);
@@ -44,9 +43,9 @@ export function ChatWindow({ girlfriend }: ChatWindowProps) {
 
     // 2. Real-time Firestore listener
     useEffect(() => {
-        if (!mounted || !db) return;
+        if (!mounted || !db || !sessionId) return;
 
-        const unsub = onSnapshot(doc(db, "global_eval_chats", GLOBAL_CHAT_ID), (docSnap) => {
+        const unsub = onSnapshot(doc(db, "global_eval_chats", sessionId), (docSnap) => {
             if (isStreamingRef.current) return; // don't overwrite while streaming
             if (docSnap.exists()) {
                 const data = docSnap.data();
@@ -66,7 +65,7 @@ export function ChatWindow({ girlfriend }: ChatWindowProps) {
         });
 
         return () => unsub();
-    }, [mounted, GLOBAL_CHAT_ID, girlfriend.opener]);
+    }, [mounted, sessionId, girlfriend.opener]);
 
     // 3. Auto scroll
     useEffect(() => {
@@ -75,11 +74,10 @@ export function ChatWindow({ girlfriend }: ChatWindowProps) {
         }
     }, [messages]);
 
-    // 4. Save to Firestore
     const saveToCloud = async (newMessages: Message[]) => {
         if (!db || newMessages.length <= 1) return;
         try {
-            await setDoc(doc(db, "global_eval_chats", GLOBAL_CHAT_ID), {
+            await setDoc(doc(db, "global_eval_chats", sessionId), {
                 messages: newMessages,
                 girlfriendId: girlfriend.id,
                 updatedAt: new Date()

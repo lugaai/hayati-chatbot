@@ -10,6 +10,13 @@ export interface Girlfriend {
     opener: string;
 }
 
+export interface ChatSession {
+    id: string;
+    title: string;
+    girlfriendId: string;
+    createdAt: number;
+}
+
 export const GIRLFRIENDS: Girlfriend[] = [
     {
         id: 'layan',

@@ -8,7 +8,7 @@ export const TRANSLATOR_MODELS = {
   RIY: {
     id: 'RIY',
     name: 'Riyadh',
-    url: 'https://tluj1t5daqjygkwk.us-east-1.aws.endpoints.huggingface.cloud',
+    url: 'https://ocmjmjfug20laoyp.us-east-1.aws.endpoints.huggingface.cloud',
   },
   BEI: {
     id: 'BEI',

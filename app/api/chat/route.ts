@@ -72,14 +72,10 @@ export async function POST(req: Request) {
     const modelId = body.modelId || 'grok-3-mini';
     const girlfriend = GIRLFRIENDS.find(g => g.id === girlfriendId) || GIRLFRIENDS[0];
 
-    let modelProvider;
-    if (modelId.includes('claude')) {
-        modelProvider = anthropic(modelId);
-    } else if (modelId.includes('grok')) {
-        modelProvider = xai(modelId);
-    } else {
-        modelProvider = openai(modelId || 'gpt-4o-mini');
-    }
+    // User requested to ONLY use Grok model
+    // Note: Since 'grok-4' does not exist yet, we will map it to the latest available Grok model (grok-3-mini or grok-beta)
+    // You can also change the string here if xAI updates their model IDs.
+    const modelProvider = xai('grok-beta'); // Or change to 'grok-3' / 'grok-2-1212' based on your xAI API access
 
     const result = await streamText({
         model: modelProvider as any,

@@ -85,6 +85,10 @@ export async function POST(req: Request) {
         model: modelProvider as any,
         system: `${girlfriend.systemPrompt}. IMPORTANT: You MUST respond ONLY in English. Do not use Arabic.`,
         messages,
+        temperature: 0.8,
+        topP: 0.9,
+        frequencyPenalty: 0.5,
+        presencePenalty: 0.6,
     });
 
     const encoder = new TextEncoder();

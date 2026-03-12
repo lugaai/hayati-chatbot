@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { GirlfriendSidebar } from "@/components/chat/GirlfriendSidebar";
+import { CharacterSidebar } from "@/components/chat/CharacterSidebar";
 import { ChatWindow } from "@/components/chat/ChatWindow";
-import { ChatSession, GIRLFRIENDS, Girlfriend } from "@/lib/models";
+import { ChatSession, CHARACTERS, Character } from "@/lib/models";
 import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import { db } from "@/lib/firebase";
@@ -17,7 +17,7 @@ export default function Home() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState("");
-  const [newChatGirlfriendId, setNewChatGirlfriendId] = useState(GIRLFRIENDS[0].id);
+  const [newChatCharacterId, setNewChatCharacterId] = useState(CHARACTERS[0].id);
   const [isCreating, setIsCreating] = useState(false);
 
   // Firestore listener for Sessions
@@ -27,7 +27,13 @@ export default function Home() {
     const unsub = onSnapshot(q, (snapshot) => {
       const loaded: ChatSession[] = [];
       snapshot.forEach(doc => {
-        loaded.push({ id: doc.id, ...doc.data() } as ChatSession);
+        const data = doc.data();
+        loaded.push({
+          id: doc.id,
+          title: data.title,
+          characterId: data.characterId || data.girlfriendId,
+          createdAt: data.createdAt,
+        } as ChatSession);
       });
       setSessions(loaded);
       // Auto-select first session if none selected and sessions exist
@@ -52,7 +58,8 @@ export default function Home() {
     try {
       const docRef = await addDoc(collection(db, "eval_sessions"), {
         title: newChatTitle,
-        girlfriendId: newChatGirlfriendId,
+        characterId: newChatCharacterId,
+        girlfriendId: newChatCharacterId, // backward compat with existing data
         createdAt: serverTimestamp()
       });
       setSelectedSessionId(docRef.id);
@@ -67,14 +74,14 @@ export default function Home() {
   };
 
   const selectedSession = sessions.find(s => s.id === selectedSessionId) || sessions[0];
-  const selectedGirlfriend = selectedSession ? (GIRLFRIENDS.find(g => g.id === selectedSession.girlfriendId) || GIRLFRIENDS[0]) : null;
+  const selectedCharacter = selectedSession ? (CHARACTERS.find(c => c.id === selectedSession.characterId) || CHARACTERS[0]) : null;
 
   return (
     <main className="flex h-screen w-full bg-black overflow-hidden font-sans selection:bg-primary/30 selection:text-white relative">
 
       {/* ── Desktop Sidebar (always visible on sm+) ── */}
       <div className="hidden sm:flex">
-        <GirlfriendSidebar
+        <CharacterSidebar
           sessions={sessions}
           selectedSessionId={selectedSessionId}
           onSelect={handleSelect}
@@ -102,7 +109,7 @@ export default function Home() {
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className="fixed top-0 left-0 z-50 h-full flex sm:hidden"
             >
-              <GirlfriendSidebar
+              <CharacterSidebar
                 sessions={sessions}
                 selectedSessionId={selectedSessionId}
                 onSelect={handleSelect}
@@ -151,12 +158,12 @@ export default function Home() {
                 <div>
                   <label className="block text-sm font-medium text-zinc-400 mb-2">Select Character</label>
                   <div className="grid grid-cols-2 gap-3">
-                    {GIRLFRIENDS.map(g => (
+                    {CHARACTERS.map(g => (
                       <button
                         key={g.id}
                         type="button"
-                        onClick={() => setNewChatGirlfriendId(g.id)}
-                        className={`flex flex-col items-center p-3 rounded-xl border transition-all ${newChatGirlfriendId === g.id ? 'bg-primary/20 border-primary text-white' : 'bg-black/30 border-white/5 text-zinc-400 hover:bg-white/5'}`}
+                        onClick={() => setNewChatCharacterId(g.id)}
+                        className={`flex flex-col items-center p-3 rounded-xl border transition-all ${newChatCharacterId === g.id ? 'bg-primary/20 border-primary text-white' : 'bg-black/30 border-white/5 text-zinc-400 hover:bg-white/5'}`}
                       >
                         <span className="font-semibold">{g.name}</span>
                         <span className="text-xs opacity-70">{g.location} ({g.dialect})</span>
@@ -188,7 +195,7 @@ export default function Home() {
 
       {/* ── Main Chat Area ── */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {selectedSession && selectedGirlfriend ? (
+        {selectedSession && selectedCharacter ? (
           <>
             <div className="sm:hidden flex items-center gap-3 h-14 px-4 border-b border-white/5 bg-black/40 backdrop-blur-md z-30">
               <button
@@ -202,7 +209,7 @@ export default function Home() {
                   {selectedSession.title}
                 </span>
                 <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-medium leading-tight">
-                  {selectedGirlfriend.name} · {selectedGirlfriend.dialect}
+                  {selectedCharacter.name} · {selectedCharacter.dialect}
                 </span>
               </div>
             </div>
@@ -214,7 +221,7 @@ export default function Home() {
               transition={{ duration: 0.3, ease: "easeOut" }}
               className="flex-1 flex flex-col overflow-hidden"
             >
-              <ChatWindow girlfriend={selectedGirlfriend} sessionId={selectedSession.id} />
+              <ChatWindow character={selectedCharacter} sessionId={selectedSession.id} />
             </motion.div>
           </>
         ) : (

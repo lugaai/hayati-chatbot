@@ -1,6 +1,6 @@
 "use client";
 
-import { ChatSession, Girlfriend, GIRLFRIENDS } from '@/lib/models';
+import { ChatSession, Character, CHARACTERS } from '@/lib/models';
 import Image from 'next/image';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -17,7 +17,7 @@ interface SidebarProps {
     onCreateNewChat: () => void;
 }
 
-export function GirlfriendSidebar({ sessions, selectedSessionId, onSelect, onCreateNewChat }: SidebarProps) {
+export function CharacterSidebar({ sessions, selectedSessionId, onSelect, onCreateNewChat }: SidebarProps) {
     return (
         <div className="w-80 border-r border-white/10 flex flex-col h-full bg-black/40 backdrop-blur-xl">
             <div className="p-6 flex items-center justify-between">
@@ -32,7 +32,7 @@ export function GirlfriendSidebar({ sessions, selectedSessionId, onSelect, onCre
 
             <div className="flex-1 overflow-y-auto px-4 space-y-2 pb-6">
                 {sessions.map((session) => {
-                    const g = GIRLFRIENDS.find(gf => gf.id === session.girlfriendId) || GIRLFRIENDS[0];
+                    const g = CHARACTERS.find(c => c.id === session.characterId) || CHARACTERS[0];
                     return (
                         <button
                             key={session.id}

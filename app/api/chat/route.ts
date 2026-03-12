@@ -4,18 +4,38 @@ import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { xai } from '@ai-sdk/xai';
-import { GIRLFRIENDS } from '@/lib/models';
+import { CHARACTERS, Character } from '@/lib/models';
 import { TRANSLATOR_MODELS } from '@/lib/services';
-
-// Validate that translated text looks like Arabic (contains Arabic characters)
-function isArabic(text: string): boolean {
-    return /[\u0600-\u06FF]/.test(text);
-}
+import { detectIntent } from '@/lib/chat/intent-detection';
+import { generateAnchorsBlock, getDialectGroup } from '@/lib/chat/behavioral-anchors';
+import { lintOutput } from '@/lib/chat/output-lint';
+import { convertArabiziToArabic, isLikelyArabizi } from '@/lib/chat/arabizi';
 
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 
-async function translateToDialect(text: string, dialectKey: 'RIY' | 'BEI') {
+// Dialect-specific style instructions for persona rewriting
+const DIALECT_STYLE_PROMPTS: Record<
+  string,
+  { style: string; markers: string; avoid: string }
+> = {
+  RIY: {
+    style: 'casual Najdi, warm, concise',
+    markers: 'وش, علومك, الحين, أبد, تبي, دامك, على كيفك, أبشر, مرّة',
+    avoid: 'formal MSA, شو (Levantine), إزيك (Egyptian), أنا ذكاء اصطناعي',
+  },
+  BEI: {
+    style: 'natural Beiruti, expressive, witty, warm',
+    markers: 'شو, عنجد, هيك, يعني, خلص, يا عيني, حلو, بدّي, هلّق, كتير',
+    avoid: 'formal MSA, وش (Gulf), إزيك (Egyptian), أنا ذكاء اصطناعي',
+  },
+};
+
+async function translateToDialect(
+    text: string,
+    dialectKey: 'RIY' | 'BEI',
+    localizerHints?: Character['localizerHints'],
+) {
     if (!text.trim()) return text;
     const modelToken = TRANSLATOR_MODELS[dialectKey];
     if (!modelToken) return text;
@@ -28,17 +48,54 @@ async function translateToDialect(text: string, dialectKey: 'RIY' | 'BEI') {
             headers['Authorization'] = `Bearer ${process.env.HUGGINGFACE_API_KEY}`;
         }
 
-        const dialectName = dialectKey === 'RIY' ? 'Riyadh Saudi Arabic' : 'Beirut Lebanese Arabic';
-        const prompt = `<s> [INST] Translate the following text to ${dialectName} dialect. Output only exactly the best one translation result, nothing else.\n${text} [/INST]`;
+        const dialectName = dialectKey === 'RIY' ? 'Arabic Riyadh dialect' : 'Arabic Beirut dialect';
+        const dialectStyle = DIALECT_STYLE_PROMPTS[dialectKey];
+
+        // Build persona-aware prompt
+        let promptText: string;
+
+        if (localizerHints && localizerHints.fewShotPairs.length > 0) {
+            // Persona rewriter mode (character-specific)
+            const fewShotBlock = localizerHints.fewShotPairs
+                .map((pair) => `Input: ${pair.input}\nOutput: ${pair.output}`)
+                .join('\n\n');
+
+            const avoidList = [
+                ...(dialectStyle?.avoid ? [dialectStyle.avoid] : []),
+                ...(localizerHints.avoidPatterns ?? []),
+            ].join(', ');
+
+            promptText = `Rewrite the following text into natural ${dialectName}.
+Tone: ${localizerHints.toneLabel}. Keep it casual and short.
+Use these dialect markers naturally: ${localizerHints.slangExamples.join(', ')}.
+Never use: ${avoidList}.
+Output only the rewritten text, nothing else.
+
+${fewShotBlock}
+
+Input: ${text}
+Output:`;
+        } else if (dialectStyle) {
+            // Dynamic fallback based on dialect spec
+            promptText = `Rewrite the following text into natural ${dialectName}.
+Style: ${dialectStyle.style}.
+Use dialect markers like: ${dialectStyle.markers}.
+Avoid: ${dialectStyle.avoid}.
+Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.
+${text}`;
+        } else {
+            // Basic fallback for unknown dialects
+            promptText = `Rewrite the following text into natural ${dialectName}. Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.\n${text}`;
+        }
 
         const response = await fetch(modelToken.url, {
             method: 'POST',
             headers,
             body: JSON.stringify({
-                inputs: prompt,
+                inputs: `<s> [INST] ${promptText} [/INST]`,
                 parameters: {
-                    max_new_tokens: 100,
-                    temperature: 0.3,
+                    max_new_tokens: 150,
+                    temperature: 0.4,
                     top_p: 0.9,
                     return_full_text: false
                 }
@@ -52,10 +109,15 @@ async function translateToDialect(text: string, dialectKey: 'RIY' | 'BEI') {
         }
 
         const result = await response.json();
-        const translated = Array.isArray(result) ? result[0]?.generated_text : result?.generated_text;
+        let translated = Array.isArray(result) ? result[0]?.generated_text : result?.generated_text;
 
         if (translated && translated.trim().length > 0) {
-            return translated.trim();
+            // Clean up common artifacts
+            translated = translated
+                .replace(/<div>|<\/div>|\[INST\]|\[\/INST\]/g, '')
+                .replace(/^Output:\s*/i, '')
+                .trim();
+            return translated;
         }
 
         return `[HF Empty Result] ${text}`;
@@ -68,18 +130,43 @@ async function translateToDialect(text: string, dialectKey: 'RIY' | 'BEI') {
 export async function POST(req: Request) {
     const body = await req.json();
     const messages = body.messages;
-    const girlfriendId = body.girlfriendId || 'layan';
+    const characterId = body.girlfriendId || body.characterId || 'layan';
     const modelId = body.modelId || 'grok-3-mini';
-    const girlfriend = GIRLFRIENDS.find(g => g.id === girlfriendId) || GIRLFRIENDS[0];
+    const character = CHARACTERS.find(g => g.id === characterId) || CHARACTERS[0];
+
+    // Pre-process: normalize Arabizi input in the latest user message (for LLM only)
+    const lastMessage = messages[messages.length - 1];
+    let userText = lastMessage?.content || '';
+    if (typeof userText === 'string' && isLikelyArabizi(userText)) {
+        const converted = convertArabiziToArabic(userText);
+        console.log(`[POST /api/chat] [Arabizi] Converted: "${userText}" -> "${converted}"`);
+        // Replace content for LLM processing (original is preserved client-side)
+        messages[messages.length - 1] = { ...lastMessage, content: converted };
+        userText = converted;
+    }
+
+    // Build enhanced system prompt with behavioral anchors + intent detection
+    const dialectGroup = getDialectGroup(character.location);
+    const anchorsBlock = generateAnchorsBlock(dialectGroup);
+
+    // Detect intent from latest user message
+    const { intent, promptHint } = detectIntent(userText);
+    if (intent !== 'general') {
+        console.log(`[POST /api/chat] [Intent] Detected: ${intent}`);
+    }
+
+    const enhancedSystemPrompt =
+        character.systemPrompt +
+        anchorsBlock +
+        (promptHint ? `\n\n${promptHint}` : '') +
+        '\n\nIMPORTANT: You MUST respond ONLY in English. Do not use Arabic.';
 
     // User requested to ONLY use Grok model
-    // Note: Since 'grok-4' does not exist yet, we will map it to the latest available Grok model (grok-3-mini or grok-beta)
-    // You can also change the string here if xAI updates their model IDs.
-    const modelProvider = xai('grok-beta'); // Or change to 'grok-3' / 'grok-2-1212' based on your xAI API access
+    const modelProvider = xai("grok-4-fast-non-reasoning");
 
     const result = await streamText({
         model: modelProvider as any,
-        system: `${girlfriend.systemPrompt}. IMPORTANT: You MUST respond ONLY in English. Do not use Arabic.`,
+        system: enhancedSystemPrompt,
         messages,
         temperature: 0.8,
         topP: 0.9,
@@ -89,6 +176,7 @@ export async function POST(req: Request) {
 
     const encoder = new TextEncoder();
     const textStream = result.textStream;
+    const enforceFeminine = character.gender === 'female';
 
     const stream = new ReadableStream({
         async start(controller) {
@@ -100,16 +188,39 @@ export async function POST(req: Request) {
                     const sentences = buffer.match(/[^.!?]+[.!?]+(\s|$)/g);
                     if (sentences) {
                         for (const sentence of sentences) {
-                            const translated = await translateToDialect(sentence.trim(), girlfriend.dialect);
-                            controller.enqueue(encoder.encode(`0:${JSON.stringify(translated + ' ')}\n`));
+                            const translated = await translateToDialect(
+                                sentence.trim(),
+                                character.dialect,
+                                character.localizerHints,
+                            );
+                            // Lint the translated sentence
+                            const linted = lintOutput(translated, {
+                                maxLength: Infinity,
+                                enforceFeminine,
+                            });
+                            if (linted.violations.length > 0) {
+                                console.log('[POST /api/chat] [Lint] Sentence violations:', linted.violations);
+                            }
+                            controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text + ' ')}\n`));
                         }
                         buffer = buffer.slice(sentences.join('').length);
                     }
                 }
                 // Flush remaining buffer
                 if (buffer.trim()) {
-                    const translated = await translateToDialect(buffer.trim(), girlfriend.dialect);
-                    controller.enqueue(encoder.encode(`0:${JSON.stringify(translated)}\n`));
+                    const translated = await translateToDialect(
+                        buffer.trim(),
+                        character.dialect,
+                        character.localizerHints,
+                    );
+                    const linted = lintOutput(translated, {
+                        maxLength: Infinity,
+                        enforceFeminine,
+                    });
+                    if (linted.violations.length > 0) {
+                        console.log('[POST /api/chat] [Lint] Final buffer violations:', linted.violations);
+                    }
+                    controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text)}\n`));
                 }
             } catch (e) {
                 console.error('Streaming error:', e);

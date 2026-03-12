@@ -1,10 +1,10 @@
 "use client";
 
-import { Girlfriend } from '@/lib/models';
+import { Character } from '@/lib/models';
 import { LLM_MODELS } from '@/lib/services';
 import { db } from '@/lib/firebase';
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
-import { Send, User, Brain } from 'lucide-react';
+import { Send, User, Brain, Copy, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useRef, useState, FormEvent } from 'react';
 import { clsx, type ClassValue } from 'clsx';
@@ -21,11 +21,11 @@ interface Message {
 }
 
 interface ChatWindowProps {
-    girlfriend: Girlfriend;
+    character: Character;
     sessionId: string;
 }
 
-export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
+export function ChatWindow({ character, sessionId }: ChatWindowProps) {
     const [modelId] = useState(LLM_MODELS.GROK);
     const [mounted, setMounted] = useState(false);
     const [loadingHistory, setLoadingHistory] = useState(true);
@@ -35,6 +35,13 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const abortRef = useRef<AbortController | null>(null);
     const isStreamingRef = useRef(false); // prevent Firestore from overwriting during stream
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    const handleCopy = async (id: string, content: string) => {
+        await navigator.clipboard.writeText(content);
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+    };
 
     // 1. Mount
     useEffect(() => {
@@ -52,20 +59,20 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
                 if (data.messages && data.messages.length > 0) {
                     setMessages(data.messages);
                 } else {
-                    setMessages([{ id: '0', role: 'assistant', content: girlfriend.opener }]);
+                    setMessages([{ id: '0', role: 'assistant', content: character.opener }]);
                 }
             } else {
-                setMessages([{ id: '0', role: 'assistant', content: girlfriend.opener }]);
+                setMessages([{ id: '0', role: 'assistant', content: character.opener }]);
             }
             setLoadingHistory(false);
         }, (error) => {
             console.error("Firestore Listen Error:", error);
-            setMessages([{ id: '0', role: 'assistant', content: girlfriend.opener }]);
+            setMessages([{ id: '0', role: 'assistant', content: character.opener }]);
             setLoadingHistory(false);
         });
 
         return () => unsub();
-    }, [mounted, sessionId, girlfriend.opener]);
+    }, [mounted, sessionId, character.opener]);
 
     // 3. Auto scroll
     useEffect(() => {
@@ -79,7 +86,7 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
         try {
             await setDoc(doc(db, "global_eval_chats", sessionId), {
                 messages: newMessages,
-                girlfriendId: girlfriend.id,
+                characterId: character.id,
                 updatedAt: new Date()
             }, { merge: true });
         } catch (e) {
@@ -115,7 +122,7 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     messages: updatedMessages.map(m => ({ role: m.role, content: m.content })),
-                    girlfriendId: girlfriend.id,
+                    girlfriendId: character.id,
                     modelId,
                 }),
                 signal: abortRef.current.signal,
@@ -171,13 +178,13 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
             <header className="hidden sm:flex h-16 sm:h-20 border-b border-white/5 items-center justify-between px-4 sm:px-8 bg-black/40 backdrop-blur-md z-10">
                 <div className="flex items-center gap-3">
                     <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center font-bold text-primary text-sm">
-                        {girlfriend.name[0]}
+                        {character.name[0]}
                     </div>
                     <div>
-                        <h2 className="font-bold text-zinc-100 text-sm sm:text-base">{girlfriend.name}</h2>
+                        <h2 className="font-bold text-zinc-100 text-sm sm:text-base">{character.name}</h2>
                         <div className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="text-[10px] text-zinc-500 uppercase tracking-tighter">Online • {girlfriend.location}</span>
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-tighter">Online • {character.location}</span>
                         </div>
                     </div>
                 </div>
@@ -198,8 +205,18 @@ export function ChatWindow({ girlfriend, sessionId }: ChatWindowProps) {
                             <div className={cn("w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1", m.role === 'user' ? "bg-white/10 text-zinc-400" : "bg-primary/20 text-primary")}>
                                 {m.role === 'user' ? <User size={16} /> : <Brain size={16} />}
                             </div>
-                            <div className={cn("group relative p-4 rounded-2xl", m.role === 'user' ? "bg-zinc-800 text-zinc-100 rounded-tr-none" : "bg-white/5 border border-white/10 text-zinc-200 rounded-tl-none")}>
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</p>
+                            <div className={cn("group relative p-4 rounded-2xl select-text", m.role === 'user' ? "bg-zinc-800 text-zinc-100 rounded-tr-none" : "bg-white/5 border border-white/10 text-zinc-200 rounded-tl-none")}>
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap selection:bg-violet-500 selection:text-white">{m.content}</p>
+                                <button
+                                    onClick={() => handleCopy(m.id, m.content)}
+                                    className={cn(
+                                        "absolute -bottom-3 right-2 p-1.5 rounded-lg bg-zinc-800 border border-white/10 text-zinc-400 hover:text-zinc-100 transition-all shadow-md",
+                                        copiedId === m.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                    )}
+                                    title="Copy message"
+                                >
+                                    {copiedId === m.id ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                                </button>
                             </div>
                         </motion.div>
                     ))}

@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Plus } from 'lucide-react';
+import packageJson from '@/package.json';
 
 function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
@@ -21,7 +22,10 @@ export function CharacterSidebar({ sessions, selectedSessionId, onSelect, onCrea
     return (
         <div className="w-80 border-r border-white/10 flex flex-col h-full bg-black/40 backdrop-blur-xl">
             <div className="p-6 flex items-center justify-between">
-                <p className="text-xs text-zinc-500 uppercase tracking-widest font-medium">Evaluation Platform</p>
+                <div>
+                    <p className="text-xs text-zinc-300 uppercase tracking-widest font-medium">Evaluation Platform</p>
+                    <p className="mt-1 text-[10px] text-zinc-500">v{packageJson.version}</p>
+                </div>
                 <button
                     onClick={onCreateNewChat}
                     className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-colors"

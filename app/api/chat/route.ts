@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 import { streamText } from 'ai';
 import { openai } from '@ai-sdk/openai';
@@ -31,24 +32,41 @@ const DIALECT_STYLE_PROMPTS: Record<
   },
 };
 
+function takeCompleteSentences(buf: string): { sentences: string[]; remainder: string } {
+  const re = /([\.!\?؟…\n])(?:[""»')\]]*)\s+/g;
+  const matches = Array.from(buf.matchAll(re));
+  if (matches.length === 0) {
+    return { sentences: [], remainder: buf };
+  }
+  const sentences: string[] = [];
+  let lastIndex = 0;
+  for (const match of matches) {
+    const endIndex = match.index! + match[0].length;
+    const sentence = buf.slice(lastIndex, endIndex).trim();
+    if (sentence) sentences.push(sentence);
+    lastIndex = endIndex;
+  }
+  return { sentences, remainder: buf.slice(lastIndex) };
+}
+
 async function translateToDialect(
     text: string,
     dialectKey: 'RIY' | 'BEI',
     localizerHints?: Character['localizerHints'],
-) {
+): Promise<string | null> {
     if (!text.trim()) return text;
     const modelToken = TRANSLATOR_MODELS[dialectKey];
     if (!modelToken) return text;
 
-    try {
-        const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-        };
-        if (process.env.HUGGINGFACE_API_KEY) {
-            headers['Authorization'] = `Bearer ${process.env.HUGGINGFACE_API_KEY}`;
-        }
+    const dialectName = dialectKey === 'RIY' ? 'Arabic Riyadh dialect' : 'Arabic Beirut dialect';
+    console.log('[POST /api/chat] [Translation] Start', {
+        dialect: dialectKey,
+        url: modelToken.url,
+        inputLength: text.length,
+        inputPreview: text.length > 60 ? text.slice(0, 60) + '…' : text,
+    });
 
-        const dialectName = dialectKey === 'RIY' ? 'Arabic Riyadh dialect' : 'Arabic Beirut dialect';
+    try {
         const dialectStyle = DIALECT_STYLE_PROMPTS[dialectKey];
 
         // Build persona-aware prompt
@@ -88,24 +106,71 @@ ${text}`;
             promptText = `Rewrite the following text into natural ${dialectName}. Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.\n${text}`;
         }
 
-        const response = await fetch(modelToken.url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-                inputs: `<s> [INST] ${promptText} [/INST]`,
-                parameters: {
-                    max_new_tokens: 150,
-                    temperature: 0.4,
-                    top_p: 0.9,
-                    return_full_text: false
-                }
-            }),
-        });
+        let response: Response;
+        try {
+            response = await fetch(modelToken.url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    inputs: `<s> [INST] ${promptText} [/INST]`,
+                    parameters: {
+                        max_new_tokens: 150,
+                        temperature: 0.4,
+                        top_p: 0.9,
+                        return_full_text: false
+                    }
+                }),
+            });
+        } catch (firstError: any) {
+            console.error('[POST /api/chat] [Translation] Network error (first attempt)', {
+                dialect: dialectKey,
+                url: modelToken.url,
+                errorName: firstError?.name,
+                errorMessage: firstError?.message,
+                errorCode: (firstError as any)?.code,
+                cause: firstError?.cause ? String(firstError.cause) : undefined,
+                stack: firstError?.stack,
+            });
+            console.warn('[POST /api/chat] [Translation] Retrying in 1s…');
+            await new Promise((r) => setTimeout(r, 1000));
+            try {
+                response = await fetch(modelToken.url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        inputs: `<s> [INST] ${promptText} [/INST]`,
+                        parameters: {
+                            max_new_tokens: 150,
+                            temperature: 0.4,
+                            top_p: 0.9,
+                            return_full_text: false
+                        }
+                    }),
+                });
+            } catch (retryError: any) {
+                console.error('[POST /api/chat] [Translation] Network error (retry failed)', {
+                    dialect: dialectKey,
+                    url: modelToken.url,
+                    errorName: retryError?.name,
+                    errorMessage: retryError?.message,
+                    errorCode: (retryError as any)?.code,
+                    cause: retryError?.cause ? String(retryError.cause) : undefined,
+                    stack: retryError?.stack,
+                });
+                return null;
+            }
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.warn(`Translation endpoint returned ${response.status}:`, errorText);
-            return `[HF Error ${response.status}] ${text}`;
+            console.error('[POST /api/chat] [Translation] HTTP error', {
+                dialect: dialectKey,
+                url: modelToken.url,
+                status: response.status,
+                statusText: response.statusText,
+                body: errorText,
+            });
+            return null;
         }
 
         const result = await response.json();
@@ -117,13 +182,30 @@ ${text}`;
                 .replace(/<div>|<\/div>|\[INST\]|\[\/INST\]/g, '')
                 .replace(/^Output:\s*/i, '')
                 .trim();
+            console.log('[POST /api/chat] [Translation] Success', {
+                dialect: dialectKey,
+                outputLength: translated.length,
+                outputPreview: translated.length > 60 ? translated.slice(0, 60) + '…' : translated,
+            });
             return translated;
         }
 
-        return `[HF Empty Result] ${text}`;
+        console.warn('[POST /api/chat] [Translation] Empty or invalid response', {
+            dialect: dialectKey,
+            url: modelToken.url,
+            resultKeys: typeof result === 'object' && result ? Object.keys(result) : [],
+        });
+        return null;
     } catch (error: any) {
-        console.error('Translation error:', error);
-        return `[HF Network Error] ${text}`;
+        console.error('[POST /api/chat] [Translation] Unexpected error', {
+            dialect: dialectKey,
+            errorName: error?.name,
+            errorMessage: error?.message,
+            errorCode: (error as any)?.code,
+            cause: error?.cause ? String(error.cause) : undefined,
+            stack: error?.stack,
+        });
+        return null;
     }
 }
 
@@ -133,6 +215,14 @@ export async function POST(req: Request) {
     const characterId = body.girlfriendId || body.characterId || 'layan';
     const modelId = body.modelId || 'grok-3-mini';
     const character = CHARACTERS.find(g => g.id === characterId) || CHARACTERS[0];
+
+    console.log('[POST /api/chat] Start', {
+        characterId: character.id,
+        characterName: character.name,
+        dialect: character.dialect,
+        modelId,
+        messageCount: messages?.length ?? 0,
+    });
 
     // Pre-process: normalize Arabizi input in the latest user message (for LLM only)
     const lastMessage = messages[messages.length - 1];
@@ -178,41 +268,65 @@ export async function POST(req: Request) {
     const textStream = result.textStream;
     const enforceFeminine = character.gender === 'female';
 
+    console.log('[POST /api/chat] [Stream] Start', { dialect: character.dialect });
+
     const stream = new ReadableStream({
         async start(controller) {
             let buffer = '';
+            let sentenceIndex = 0;
             try {
                 for await (const chunk of textStream) {
                     buffer += chunk;
-                    // Try to split on sentence boundaries
-                    const sentences = buffer.match(/[^.!?]+[.!?]+(\s|$)/g);
-                    if (sentences) {
-                        for (const sentence of sentences) {
-                            const translated = await translateToDialect(
-                                sentence.trim(),
-                                character.dialect,
-                                character.localizerHints,
-                            );
-                            // Lint the translated sentence
-                            const linted = lintOutput(translated, {
-                                maxLength: Infinity,
-                                enforceFeminine,
+                    const { sentences, remainder } = takeCompleteSentences(buffer);
+                    buffer = remainder;
+                    for (const sentence of sentences) {
+                        const raw = sentence.trim();
+                        sentenceIndex += 1;
+                        console.log('[POST /api/chat] [Stream] Sentence', {
+                            index: sentenceIndex,
+                            length: raw.length,
+                            preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
+                        });
+                        const translated = (await translateToDialect(
+                            raw,
+                            character.dialect,
+                            character.localizerHints,
+                        )) ?? raw;
+                        if (translated === raw) {
+                            console.log('[POST /api/chat] [Stream] Fallback to original (translation failed or empty)', {
+                                index: sentenceIndex,
+                                preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
                             });
-                            if (linted.violations.length > 0) {
-                                console.log('[POST /api/chat] [Lint] Sentence violations:', linted.violations);
-                            }
-                            controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text + ' ')}\n`));
                         }
-                        buffer = buffer.slice(sentences.join('').length);
+                        const linted = lintOutput(translated, {
+                            maxLength: Infinity,
+                            enforceFeminine,
+                        });
+                        if (linted.violations.length > 0) {
+                            console.log('[POST /api/chat] [Lint] Sentence violations:', linted.violations);
+                        }
+                        controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text + ' ')}\n`));
                     }
                 }
-                // Flush remaining buffer
                 if (buffer.trim()) {
-                    const translated = await translateToDialect(
-                        buffer.trim(),
+                    const raw = buffer.trim();
+                    sentenceIndex += 1;
+                    console.log('[POST /api/chat] [Stream] Final buffer', {
+                        index: sentenceIndex,
+                        length: raw.length,
+                        preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
+                    });
+                    const translated = (await translateToDialect(
+                        raw,
                         character.dialect,
                         character.localizerHints,
-                    );
+                    )) ?? raw;
+                    if (translated === raw) {
+                        console.log('[POST /api/chat] [Stream] Fallback to original for final buffer (translation failed or empty)', {
+                            index: sentenceIndex,
+                            preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
+                        });
+                    }
                     const linted = lintOutput(translated, {
                         maxLength: Infinity,
                         enforceFeminine,
@@ -222,8 +336,16 @@ export async function POST(req: Request) {
                     }
                     controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text)}\n`));
                 }
-            } catch (e) {
-                console.error('Streaming error:', e);
+                console.log('[POST /api/chat] [Stream] Complete', { totalSentences: sentenceIndex });
+            } catch (e: any) {
+                console.error('[POST /api/chat] [Stream] Error', {
+                    errorName: e?.name,
+                    errorMessage: e?.message,
+                    errorCode: (e as any)?.code,
+                    cause: e?.cause ? String(e.cause) : undefined,
+                    stack: e?.stack,
+                    sentenceIndex,
+                });
             } finally {
                 controller.close();
             }

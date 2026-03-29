@@ -48,6 +48,45 @@ const MASCULINE_FORM_PATTERNS: Array<{ pattern: RegExp; replacement: string }> =
     { pattern: /(?<=\s|^)أنا محتار(?=\s|$)/, replacement: 'أنا محتارة' },
   ];
 
+// Feminine second-person forms addressing the user → masculine equivalents
+// The user is always male, so second-person forms must be masculine.
+const FEMININE_ADDRESSEE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> =
+  [
+    // Pronouns
+    { pattern: /(?<=\s|^)انتي(?=\s|$)/, replacement: 'أنت' },
+    { pattern: /(?<=\s|^)إنتي(?=\s|$)/, replacement: 'إنت' },
+    { pattern: /(?<=\s|^)أنتي(?=\s|$)/, replacement: 'أنت' },
+    // Present tense -ين verb forms
+    { pattern: /(?<=\s|^)تبين(?=\s|$)/, replacement: 'تبي' },
+    { pattern: /(?<=\s|^)تحبين(?=\s|$)/, replacement: 'تحب' },
+    { pattern: /(?<=\s|^)تسمعين(?=\s|$)/, replacement: 'تسمع' },
+    { pattern: /(?<=\s|^)تقولين(?=\s|$)/, replacement: 'تقول' },
+    { pattern: /(?<=\s|^)تعرفين(?=\s|$)/, replacement: 'تعرف' },
+    { pattern: /(?<=\s|^)تقدرين(?=\s|$)/, replacement: 'تقدر' },
+    { pattern: /(?<=\s|^)تحسين(?=\s|$)/, replacement: 'تحس' },
+    { pattern: /(?<=\s|^)تفكرين(?=\s|$)/, replacement: 'تفكر' },
+    { pattern: /(?<=\s|^)تشوفين(?=\s|$)/, replacement: 'تشوف' },
+    { pattern: /(?<=\s|^)تروحين(?=\s|$)/, replacement: 'تروح' },
+    { pattern: /(?<=\s|^)تجين(?=\s|$)/, replacement: 'تجي' },
+    { pattern: /(?<=\s|^)تحتاجين(?=\s|$)/, replacement: 'تحتاج' },
+    { pattern: /(?<=\s|^)تستاهلين(?=\s|$)/, replacement: 'تستاهل' },
+    // Levantine بت- prefix feminine
+    { pattern: /(?<=\s|^)بتحبي(?=\s|$)/, replacement: 'بتحب' },
+    { pattern: /(?<=\s|^)بتعرفي(?=\s|$)/, replacement: 'بتعرف' },
+    { pattern: /(?<=\s|^)بتحسي(?=\s|$)/, replacement: 'بتحس' },
+    { pattern: /(?<=\s|^)بتفكري(?=\s|$)/, replacement: 'بتفكر' },
+    // Past tense -تي
+    { pattern: /(?<=\s|^)حبيتي(?=\s|$)/, replacement: 'حبيت' },
+    { pattern: /(?<=\s|^)سمعتي(?=\s|$)/, replacement: 'سمعت' },
+    { pattern: /(?<=\s|^)شفتي(?=\s|$)/, replacement: 'شفت' },
+    { pattern: /(?<=\s|^)قلتي(?=\s|$)/, replacement: 'قلت' },
+    { pattern: /(?<=\s|^)عرفتي(?=\s|$)/, replacement: 'عرفت' },
+    // Imperatives (excluding روحي which is ambiguous — also means "my soul")
+    { pattern: /(?<=\s|^)تعالي(?=\s|$)/, replacement: 'تعال' },
+    { pattern: /(?<=\s|^)قولي(?=\s|$)/, replacement: 'قول' },
+    { pattern: /(?<=\s|^)شوفي(?=\s|$)/, replacement: 'شوف' },
+  ];
+
 // Bio/intro repetition patterns
 const BIO_REPETITION_PATTERNS: RegExp[] = [
   /أنا .{2,20}، عمري \d+ (سنة|عام)/,
@@ -91,6 +130,16 @@ export function lintOutput(
       if (pattern.test(modified)) {
         violations.push(
           `MASCULINE_FORM: "${pattern.source}" -> "${replacement}"`,
+        );
+        modified = modified.replace(pattern, replacement);
+      }
+    }
+
+    // 2b. Fix feminine second-person forms addressing the user → masculine
+    for (const { pattern, replacement } of FEMININE_ADDRESSEE_PATTERNS) {
+      if (pattern.test(modified)) {
+        violations.push(
+          `FEM_ADDR: "${pattern.source}" -> "${replacement}"`,
         );
         modified = modified.replace(pattern, replacement);
       }

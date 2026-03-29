@@ -21,14 +21,14 @@ const DIALECT_STYLE_PROMPTS: Record<
   { style: string; markers: string; avoid: string }
 > = {
   RIY: {
-    style: 'casual Najdi, warm, concise',
+    style: 'casual Najdi feminine speaker addressing a male listener, warm, concise',
     markers: 'وش, علومك, الحين, أبد, تبي, دامك, على كيفك, أبشر, مرّة',
-    avoid: 'formal MSA, شو (Levantine), إزيك (Egyptian), أنا ذكاء اصطناعي',
+    avoid: 'formal MSA, شو (Levantine), إزيك (Egyptian), أنا ذكاء اصطناعي, feminine second-person forms (انتي/عندك بصيغة المؤنث) — always use masculine forms when addressing the listener (أنت/عندك بصيغة المذكر)',
   },
   BEI: {
-    style: 'natural Beiruti, expressive, witty, warm',
+    style: 'natural Beiruti feminine speaker addressing a male listener, expressive, witty, warm',
     markers: 'شو, عنجد, هيك, يعني, خلص, يا عيني, حلو, بدّي, هلّق, كتير',
-    avoid: 'formal MSA, وش (Gulf), إزيك (Egyptian), أنا ذكاء اصطناعي',
+    avoid: 'formal MSA, وش (Gulf), إزيك (Egyptian), أنا ذكاء اصطناعي, feminine second-person forms (إنتي) — always use masculine forms when addressing the listener (إنت/أنت)',
   },
 };
 
@@ -84,7 +84,8 @@ async function translateToDialect(
             ].join(', ');
 
             promptText = `Rewrite the following text into natural ${dialectName}.
-Tone: ${localizerHints.toneLabel}. Keep it casual and short.
+Tone: ${localizerHints.toneLabel}. The speaker is female — keep her voice feminine, casual, and short.
+The listener is male — always use masculine second-person forms (أنت not انتي, verb conjugations for male addressee).
 Use these dialect markers naturally: ${localizerHints.slangExamples.join(', ')}.
 Never use: ${avoidList}.
 Output only the rewritten text, nothing else.
@@ -97,13 +98,14 @@ Output:`;
             // Dynamic fallback based on dialect spec
             promptText = `Rewrite the following text into natural ${dialectName}.
 Style: ${dialectStyle.style}.
+The speaker is female — keep her voice feminine. The listener is male — use masculine second-person forms (أنت not انتي).
 Use dialect markers like: ${dialectStyle.markers}.
 Avoid: ${dialectStyle.avoid}.
 Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.
 ${text}`;
         } else {
             // Basic fallback for unknown dialects
-            promptText = `Rewrite the following text into natural ${dialectName}. Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.\n${text}`;
+            promptText = `Rewrite the following text into natural ${dialectName}. The speaker is female — keep her voice feminine. The listener is male — use masculine second-person forms (أنت not انتي). Keep it casual, short, and natural-sounding. Output only the rewritten text, nothing else.\n${text}`;
         }
 
         let response: Response;
@@ -245,8 +247,25 @@ export async function POST(req: Request) {
         console.log(`[POST /api/chat] [Intent] Detected: ${intent}`);
     }
 
+    const genderAndStyleBlock = `
+
+# Gender Rules (CRITICAL)
+- You are female. Always use feminine forms when referring to yourself (أنا سعيدة، كنت متحمسة، فرحانة، etc.).
+- The user is ALWAYS male. When addressing the user, ALWAYS use masculine Arabic forms:
+  - أنت (never انتي/أنتي)
+  - Masculine verbs: تبي، تحب، تسمع، تقول، تعرف، تقدر (never تبين، تحبين، تسمعين، تقولين، تعرفين، تقدرين)
+  - Past tense: حبيت، سمعت، شفت (never حبيتي، سمعتي، شفتي)
+  - Imperative: تعال، قول، شوف (never تعالي، قولي، شوفي)
+
+# Natural Language (IMPORTANT)
+- Never use formal MSA structures. Prefer colloquial dialect phrasing.
+- Example: say "نسولف عن التصوير" not "نناقش صور فوتوغرافية".
+- Sound like you're texting, not writing an essay.
+`;
+
     const enhancedSystemPrompt =
         character.systemPrompt +
+        genderAndStyleBlock +
         anchorsBlock +
         (promptHint ? `\n\n${promptHint}` : '') +
         '\n\nIMPORTANT: You MUST respond ONLY in English. Do not use Arabic.';

@@ -49,14 +49,19 @@ function takeCompleteSentences(buf: string): { sentences: string[]; remainder: s
   return { sentences, remainder: buf.slice(lastIndex) };
 }
 
+interface TranslateResult {
+    text: string | null;
+    prompt: string;
+}
+
 async function translateToDialect(
     text: string,
     dialectKey: 'RIY' | 'BEI',
     localizerHints?: Character['localizerHints'],
-): Promise<string | null> {
-    if (!text.trim()) return text;
+): Promise<TranslateResult> {
+    if (!text.trim()) return { text, prompt: '' };
     const modelToken = TRANSLATOR_MODELS[dialectKey];
-    if (!modelToken) return text;
+    if (!modelToken) return { text, prompt: '' };
 
     const dialectName = dialectKey === 'RIY' ? 'Arabic Riyadh dialect' : 'Arabic Beirut dialect';
     console.log('[POST /api/chat] [Translation] Start', {
@@ -159,7 +164,7 @@ ${text}`;
                     cause: retryError?.cause ? String(retryError.cause) : undefined,
                     stack: retryError?.stack,
                 });
-                return null;
+                return { text: null, prompt: promptText };
             }
         }
 
@@ -172,7 +177,7 @@ ${text}`;
                 statusText: response.statusText,
                 body: errorText,
             });
-            return null;
+            return { text: null, prompt: promptText };
         }
 
         const result = await response.json();
@@ -189,7 +194,7 @@ ${text}`;
                 outputLength: translated.length,
                 outputPreview: translated.length > 60 ? translated.slice(0, 60) + '…' : translated,
             });
-            return translated;
+            return { text: translated, prompt: promptText };
         }
 
         console.warn('[POST /api/chat] [Translation] Empty or invalid response', {
@@ -197,7 +202,7 @@ ${text}`;
             url: modelToken.url,
             resultKeys: typeof result === 'object' && result ? Object.keys(result) : [],
         });
-        return null;
+        return { text: null, prompt: promptText };
     } catch (error: any) {
         console.error('[POST /api/chat] [Translation] Unexpected error', {
             dialect: dialectKey,
@@ -207,7 +212,7 @@ ${text}`;
             cause: error?.cause ? String(error.cause) : undefined,
             stack: error?.stack,
         });
-        return null;
+        return { text: null, prompt: '' };
     }
 }
 
@@ -293,6 +298,9 @@ export async function POST(req: Request) {
         async start(controller) {
             let buffer = '';
             let sentenceIndex = 0;
+            let originalOutput = '';
+            let translatedOutput = '';
+            let lastTranslatorPrompt = '';
             try {
                 for await (const chunk of textStream) {
                     buffer += chunk;
@@ -306,11 +314,14 @@ export async function POST(req: Request) {
                             length: raw.length,
                             preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
                         });
-                        const translated = (await translateToDialect(
+                        originalOutput += raw + ' ';
+                        const result = await translateToDialect(
                             raw,
                             character.dialect,
                             character.localizerHints,
-                        )) ?? raw;
+                        );
+                        const translated = result.text ?? raw;
+                        if (result.prompt) lastTranslatorPrompt = result.prompt;
                         if (translated === raw) {
                             console.log('[POST /api/chat] [Stream] Fallback to original (translation failed or empty)', {
                                 index: sentenceIndex,
@@ -324,6 +335,7 @@ export async function POST(req: Request) {
                         if (linted.violations.length > 0) {
                             console.log('[POST /api/chat] [Lint] Sentence violations:', linted.violations);
                         }
+                        translatedOutput += linted.text + ' ';
                         controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text + ' ')}\n`));
                     }
                 }
@@ -335,11 +347,14 @@ export async function POST(req: Request) {
                         length: raw.length,
                         preview: raw.length > 50 ? raw.slice(0, 50) + '…' : raw,
                     });
-                    const translated = (await translateToDialect(
+                    originalOutput += raw;
+                    const result = await translateToDialect(
                         raw,
                         character.dialect,
                         character.localizerHints,
-                    )) ?? raw;
+                    );
+                    const translated = result.text ?? raw;
+                    if (result.prompt) lastTranslatorPrompt = result.prompt;
                     if (translated === raw) {
                         console.log('[POST /api/chat] [Stream] Fallback to original for final buffer (translation failed or empty)', {
                             index: sentenceIndex,
@@ -353,8 +368,19 @@ export async function POST(req: Request) {
                     if (linted.violations.length > 0) {
                         console.log('[POST /api/chat] [Lint] Final buffer violations:', linted.violations);
                     }
+                    translatedOutput += linted.text;
                     controller.enqueue(encoder.encode(`0:${JSON.stringify(linted.text)}\n`));
                 }
+                // Send debug info as a special stream line
+                const isTranslated = originalOutput.trim() !== translatedOutput.trim();
+                const debugInfo = {
+                    originalOutput: originalOutput.trim(),
+                    translatedOutput: isTranslated ? translatedOutput.trim() : null,
+                    isTranslated,
+                    translatorPrompt: lastTranslatorPrompt || null,
+                    llmPrompt: enhancedSystemPrompt,
+                };
+                controller.enqueue(encoder.encode(`d:${JSON.stringify(debugInfo)}\n`));
                 console.log('[POST /api/chat] [Stream] Complete', { totalSentences: sentenceIndex });
             } catch (e: any) {
                 console.error('[POST /api/chat] [Stream] Error', {

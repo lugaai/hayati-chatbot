@@ -14,10 +14,19 @@ function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
+interface DebugInfo {
+    originalOutput: string;
+    translatedOutput: string | null;
+    isTranslated: boolean;
+    translatorPrompt: string | null;
+    llmPrompt: string | null;
+}
+
 interface Message {
     id: string;
     role: 'user' | 'assistant';
     content: string;
+    debug?: DebugInfo;
 }
 
 interface ChatWindowProps {
@@ -133,6 +142,7 @@ export function ChatWindow({ character, sessionId }: ChatWindowProps) {
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let fullText = '';
+            let debugInfo: DebugInfo | undefined;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -150,11 +160,16 @@ export function ChatWindow({ character, sessionId }: ChatWindowProps) {
                                 m.id === assistantId ? { ...m, content: fullText } : m
                             ));
                         } catch { /* ignore parse errors */ }
+                    } else if (line.startsWith('d:')) {
+                        try {
+                            debugInfo = JSON.parse(line.slice(2));
+                        } catch { /* ignore parse errors */ }
                     }
                 }
             }
 
-            const finalMessages: Message[] = [...updatedMessages, { id: assistantId, role: 'assistant', content: fullText }];
+            const finalMessages: Message[] = [...updatedMessages, { id: assistantId, role: 'assistant', content: fullText, debug: debugInfo }];
+            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, debug: debugInfo } : m));
             await saveToCloud(finalMessages);
         } catch (err: any) {
             if (err.name !== 'AbortError') {
@@ -217,6 +232,34 @@ export function ChatWindow({ character, sessionId }: ChatWindowProps) {
                                 >
                                     {copiedId === m.id ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                                 </button>
+                                {m.role === 'assistant' && m.debug && (
+                                    <div className="hidden group-hover:block absolute bottom-full left-0 mb-2 w-[28rem] max-h-96 overflow-y-auto bg-zinc-900 border border-white/10 rounded-xl p-3 text-xs text-zinc-300 shadow-xl z-50">
+                                        <div className="font-semibold text-sm text-zinc-100 border-b border-white/10 pb-1 mb-2">Debug Info</div>
+                                        <div className="mb-1"><span className="text-zinc-500">Translated:</span> {m.debug.isTranslated ? 'Yes' : 'No'}</div>
+                                        <div className="mb-1">
+                                            <div className="text-zinc-500 mb-0.5">Original (LLM):</div>
+                                            <div dir="auto" className="bg-white/5 rounded p-1.5 whitespace-pre-wrap break-words">{m.debug.originalOutput}</div>
+                                        </div>
+                                        {m.debug.translatedOutput && (
+                                            <div className="mb-1">
+                                                <div className="text-zinc-500 mb-0.5">Translated:</div>
+                                                <div dir="auto" className="bg-white/5 rounded p-1.5 whitespace-pre-wrap break-words">{m.debug.translatedOutput}</div>
+                                            </div>
+                                        )}
+                                        {m.debug.translatorPrompt && (
+                                            <div className="mb-1">
+                                                <div className="text-zinc-500 mb-0.5">Translator Prompt:</div>
+                                                <div dir="auto" className="bg-white/5 rounded p-1.5 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">{m.debug.translatorPrompt}</div>
+                                            </div>
+                                        )}
+                                        {m.debug.llmPrompt && (
+                                            <div>
+                                                <div className="text-zinc-500 mb-0.5">LLM System Prompt:</div>
+                                                <div className="bg-white/5 rounded p-1.5 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">{m.debug.llmPrompt}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </motion.div>
                     ))}

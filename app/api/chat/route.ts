@@ -6,7 +6,7 @@ import { openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { xai } from '@ai-sdk/xai';
 import { CHARACTERS, Character } from '@/lib/models';
-import { TRANSLATOR_MODELS } from '@/lib/services';
+import { getTranslatorURL } from '@/lib/remote-config';
 import { detectIntent } from '@/lib/chat/intent-detection';
 import { generateAnchorsBlock, getDialectGroup } from '@/lib/chat/behavioral-anchors';
 import { lintOutput } from '@/lib/chat/output-lint';
@@ -60,13 +60,18 @@ async function translateToDialect(
     localizerHints?: Character['localizerHints'],
 ): Promise<TranslateResult> {
     if (!text.trim()) return { text, prompt: '' };
-    const modelToken = TRANSLATOR_MODELS[dialectKey];
-    if (!modelToken) return { text, prompt: '' };
+
+    const translatorURL = await getTranslatorURL(dialectKey);
+    if (!translatorURL) {
+        console.error(`[POST /api/chat] [Translation] No translator URL found for dialect: ${dialectKey}`);
+        return { text, prompt: '' };
+    }
+    console.log(`Using ${dialectKey} translator URL: ${translatorURL}`)
 
     const dialectName = dialectKey === 'RIY' ? 'Arabic Riyadh dialect' : 'Arabic Beirut dialect';
     console.log('[POST /api/chat] [Translation] Start', {
         dialect: dialectKey,
-        url: modelToken.url,
+        url: translatorURL,
         inputLength: text.length,
         inputPreview: text.length > 60 ? text.slice(0, 60) + '…' : text,
     });
@@ -115,7 +120,7 @@ ${text}`;
 
         let response: Response;
         try {
-            response = await fetch(modelToken.url, {
+            response = await fetch(translatorURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -131,7 +136,7 @@ ${text}`;
         } catch (firstError: any) {
             console.error('[POST /api/chat] [Translation] Network error (first attempt)', {
                 dialect: dialectKey,
-                url: modelToken.url,
+                url: translatorURL,
                 errorName: firstError?.name,
                 errorMessage: firstError?.message,
                 errorCode: (firstError as any)?.code,
@@ -141,7 +146,7 @@ ${text}`;
             console.warn('[POST /api/chat] [Translation] Retrying in 1s…');
             await new Promise((r) => setTimeout(r, 1000));
             try {
-                response = await fetch(modelToken.url, {
+                response = await fetch(translatorURL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -157,7 +162,7 @@ ${text}`;
             } catch (retryError: any) {
                 console.error('[POST /api/chat] [Translation] Network error (retry failed)', {
                     dialect: dialectKey,
-                    url: modelToken.url,
+                    url: translatorURL,
                     errorName: retryError?.name,
                     errorMessage: retryError?.message,
                     errorCode: (retryError as any)?.code,
@@ -172,7 +177,7 @@ ${text}`;
             const errorText = await response.text();
             console.error('[POST /api/chat] [Translation] HTTP error', {
                 dialect: dialectKey,
-                url: modelToken.url,
+                url: translatorURL,
                 status: response.status,
                 statusText: response.statusText,
                 body: errorText,
@@ -199,7 +204,7 @@ ${text}`;
 
         console.warn('[POST /api/chat] [Translation] Empty or invalid response', {
             dialect: dialectKey,
-            url: modelToken.url,
+            url: translatorURL,
             resultKeys: typeof result === 'object' && result ? Object.keys(result) : [],
         });
         return { text: null, prompt: promptText };

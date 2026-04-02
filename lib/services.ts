@@ -4,15 +4,5 @@ export const LLM_MODELS = {
   GPT4: 'gpt-4o-mini',
 };
 
-export const TRANSLATOR_MODELS = {
-  RIY: {
-    id: 'RIY',
-    name: 'Riyadh',
-    url: 'https://lm1wopjk7d6psz4d.us-east-1.aws.endpoints.huggingface.cloud',
-  },
-  BEI: {
-    id: 'BEI',
-    name: 'Beirut',
-    url: 'https://lb8jazc1zfvc4hik.us-east-1.aws.endpoints.huggingface.cloud',
-  }
-};
+// Translator model URLs are fetched at runtime from Firebase Remote Config
+// (keys: RIYtranslatorURL, BEItranslatorURL). See lib/remote-config.ts.
